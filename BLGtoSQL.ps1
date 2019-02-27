@@ -21,11 +21,11 @@
         WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
     - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
     
-    Sample usage of this script:
+    Sample usage of this script 
         ./BLGToSQL.ps1 -PerfmonDirectory "E:\PerfmonData" -ServerName="PRDSQL01" 
         
     .LINK
-    Fetch this script it its most updated form at:
+    Fetch this script it its most updated from at:
     https://github.com/heraflux/BLGtoSQL  
     
     .PARAMETER PerfmonDirectory
@@ -36,128 +36,147 @@
 
     .PARAMETER ConnString
     Connection string for the target SQL Server database
-    
-    .PARAMETER BatchSize
-    The records maximum batch size when performing the SQL Server bulk import command.
 
     #>
-    
+
+[CmdletBinding()]    
 param( 
-    $PerfmonDirectory,
-    $ServerName,
-    $ConnString = "Data Source=targetserver;Initial Catalog=PerfmonImport;Connection Timeout=1200;Integrated Security=True;Application Name=Heraflux_BLGtoSQL;",
-    $BatchSize = 50000
+    $PerfmonDirectory="c:\temp\perfmon",
+    $ServerName="localhost",
+    $ConnString=""
 )
+$VerbosePreference="Continue"
+
+if($ConnString -eq "") {
+    $ConnString = "Data Source=$ServerName;Initial Catalog=tempdb;Connection Timeout=3600;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
+}
 
 Clear-Host
 
+$ErrorActionPreference = 'Stop';
+
+# files in directory?
+if(!(Test-Path -Path $PerfmonDirectory)) {
+    throw "Directory $PerfmonDirectory does not exist.";
+}
+
+# connect to server
+try {
+    $sqlconn = new-object System.Data.SqlClient.SqlConnection($ConnString)
+    $sqlconn.Open();
+    $sqlconn.Close();
+} catch {
+    throw "Cannot connect to server $serverName.";
+}
+
+# does database "PerfmonImport" exist?
+$ConnString = $ConnString.Replace("tempdb","PerfmonImport")
+try {
+    $sqlconn = new-object System.Data.SqlClient.SqlConnection($ConnString)
+    $sqlconn.Open();
+    $sqlconn.Close();
+} catch {
+    throw "Cannot connect to database [PerfmonImport]. Did you run DBSchema.sql?";
+}
+
+
+
 #Find all CABs in specified folder so we can unpack
-$Files = get-childitem $PerfmonDir -recurse 
-$CabList = $Files | where {$_.extension -eq ".cab"} 
-ForEach ($File in $CabList) {
-   Write-Host "CAB file to extract: " $File.FullName
-   Write-Host "CAB file to extract into folder: " $File.DirectoryName
-   expand -F:* $File.FullName $File.DirectoryName
-}
+Write-Verbose   "Searching for and extacting all CAB files in $PerfmonDirectory"
+get-childitem $PerfmonDirectory -recurse -Filter "*.cab"  | % { expand -F:* $_.FullName  $_.DirectoryName } | out-null
+Write-Verbose   "relogging for and extacting all CAB files in $PerfmonDirectory"
+get-childitem $PerfmonDirectory -recurse -Filter "*.blg"  | % { relog $_.FullName -f tsv -y -o ($_.FullName -Replace (".blg",".csv")) } | out-null
 
-#Find all BLG files and RELOG to CSV
-#Relog with TSV format instead of CSV because of Counters that have commas in them
-#Example: \\DBASE\Processor Information(1,4)\% of Maximum Frequency
-$Files = get-childitem $PerfmonDir -recurse 
-$BLGList = $Files | where {$_.extension -eq ".blg"} 
-ForEach ($File in $BLGList) {
-   Write-Host "BLG file to relog: " $File.FullName
-   Write-Host "BLG file to relog into folder: " $File.DirectoryName
-   $CSVName = $File.FullName -replace ".blg",".csv"
-   relog $File.FullName -f tsv -y -o $CSVName
-}
-
-#Find all CSV files and import into database
-$Files = get-childitem $PerfmonDir -recurse 
-$BLGList = $Files | where {$_.extension -eq ".csv"} 
-ForEach ($File in $BLGList) {
-   Write-Host "CSV file to import: " $File.FullName
-   $conn = new-object System.Data.SqlClient.SqlConnection($ConnString)
-   $bcp = new-object ("System.Data.SqlClient.SqlBulkCopy") $conn
+write-verbose "Import Directory: $PerfmonDirectory"
+#Find all BLG files and import into database
+ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
+   write-verbose "CSV file to import: $File"
+   $bcp = new-object ("System.Data.SqlClient.SqlBulkCopy") $sqlconn
    $bcp.DestinationTableName = "dbo.PerfmonImportStage"
    $bcp.BulkCopyTimeout = 0
-   $conn.Open()
-   
+   $sqlconn.Open()
+
    #Create placeholder datatable
    $dt = new-object System.Data.DataTable
    $col0 = new-object System.Data.DataColumn 'ServerName' 
    $col1 = new-object System.Data.DataColumn 'DateTimeStamp' 
-   $col2 = new-object System.Data.DataColumn 'CounterInstance'
-   $col3 = new-object System.Data.DataColumn 'CounterValue' 
+   $col2 = new-object System.Data.DataColumn 'CounterSet'
+   $col3 = new-object System.Data.DataColumn 'CounterName'
+   $col4 = new-object System.Data.DataColumn 'CounterInstance'
+   $col5 = new-object System.Data.DataColumn 'CounterValue' 
    $dt.columns.Add($col0) 
    $dt.columns.Add($col1)
    $dt.columns.Add($col2)
    $dt.columns.Add($col3)
+   $dt.columns.Add($col4)
+   $dt.columns.Add($col5)
 
-   $datapointCounter = 0
+   #Load this BLG into RAM
+   try {
+       $blg = Import-Counter -Path $File.FullName -ErrorAction SilentlyContinue
 
-   #Load this CSV into RAM
-   $csv = Import-Csv -Delimiter "`t" -Path $File.FullName
-
-   #Iterate through the CSV
-   foreach($line in $csv) {
-        $properties = $line | Get-Member -MemberType Properties
-        #Iterate through columns
-        for($i=0; $i -lt $properties.Count; $i++) {
-            $timestamp = $line | select -expandproperty $properties[0].Name
-            $col = $properties[$i]
-            $colvalue = $line | select -expandproperty $col.Name
-
-            #Skip header row and empty datapoints
-            if ( !([string]$col.Name -like "*SV *") -And ([string]$colvalue.trim().length -gt 0) ) {
+       #Iterate through the BLG's
+       foreach($line in $blg) {
+            #Iterate through columns
+            $clist = $line.CounterSamples
+            foreach ($sample in $clist){
                 try {
                     $row = $dt.NewRow()
+                    $s1 = ($sample.Path).Substring(2,$sample.Path.Length - 2)
+                    $ServerName = $s1.Substring(0, $s1.IndexOf("\"))
+                    $MainString = $s1.Substring($s1.IndexOf("\") , $s1.length - $s1.IndexOf("\"))
+                    $CounterArray = $MainString -split '\\' 
+                    $row.CounterName = $CounterArray[2]
+                    $row.CounterSet = $CounterArray[1]
                     $row.ServerName = $ServerName
-                    $row.DateTimeStamp = [datetime]$timestamp
-                    $row.CounterInstance = [string]$col.Name
-                    $row.CounterValue = [float]$colvalue.trim()
+                    $row.DateTimeStamp = [datetime]$sample.Timestamp
+                    $row.CounterInstance = [string]$sample.InstanceName
+                    $row.CounterValue = [int]$sample.CookedValue
                     $dt.Rows.Add($row)
+                    
                 } catch {
-                    Write-Host "Invalid counter name: " $col.Name
+                    write-error "Unknown Error Encountered"
+                    Write-Error $_
                 }
             }
-            $datapointCounter = $datapointCounter + 1
-
-            #Flush to database after batch size is met
-            if ( ($datapointCounter % $BatchSize) -eq 0 ) {
-                Write-Host $datapointCounter "points collected. Flushing to database..."
-                $bcp.WriteToServer($dt)
-                $dt.Clear()
-            }
         }
-   }
-
-   #Final flush to database
-   Write-Host $datapointCounter "points collected. Flushing to database..."
-   $bcp.WriteToServer($dt)
-   $dt.Clear()
+        $flushoutput = $blg.Count.ToString() + " points collected. Flushing to database..."
+        write-verbose $flushoutput
+        try {
+            $bcp.WriteToServer($dt)
+        } finally {
+            $dt.Clear()
+        }
+    } catch {
+        Write-Error "Error Processing CSV file $File"
+    } finally {
+        $sqlconn.Close();
+    }
+} # for each file
 
    #Clean up
-   $conn.Close()
-   $conn.Dispose()
+   $sqlconn.Dispose()
    $bcp.Close()
    $bcp.Dispose()
    $dt.Dispose()
    [System.GC]::Collect()
 
    
-}
+
 
 
 #Move data to final table and clean up staging table
-Write-Host "Now moving data to the final table..."
+write-verbose "Now moving data to the final table..."
 $conn = new-object System.Data.SqlClient.SqlConnection($ConnString)
 $conn.Open()
 $cmd = new-object System.Data.SqlClient.SqlCommand
 $cmd.Connection = $conn
-$cmd.CommandText = "INSERT INTO dbo.PerfmonImport (ServerName, DateTimeStamp, CounterInstance, CounterValue) SELECT ServerName, DateTimeStamp, CounterInstance, CounterValue from dbo.PerfmonImportStage"
-$cmd.ExecuteNonQuery()
+$cmd.CommandText = "INSERT INTO dbo.PerfmonImport (ServerName, DateTimeStamp, CounterSet, CounterName, CounterInstance, CounterValue) SELECT ServerName, DateTimeStamp, CounterSet, CounterName, CounterInstance, CounterValue from dbo.PerfmonImportStage"
+$numberofrecords = $cmd.ExecuteNonQuery()
 $cmd.CommandText = "TRUNCATE TABLE dbo.PerfmonImportStage"
-$cmd.ExecuteNonQuery()
+$trunc1 = $cmd.ExecuteNonQuery()
 $conn.Close()
-Write-Host "Done importing this Perfmon data batch!"
+if ($trunc1 -eq -1){Write-Verbose "Truncating table PerfmonImportStage"}
+$outputtext = $numberofrecords.ToString() + " imported into PerfmonImport table"
+Write-Verbose $outputtext
+write-verbose "Done importing this Perfmon data batch!"
