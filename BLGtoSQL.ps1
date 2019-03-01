@@ -1,6 +1,6 @@
 <# 
     .SYNOPSIS 
-    Perfmon BLG to SQL Server Importer - by David Klee, Heraflux Technologies
+    Perfmon BLG to SQL Server Importer - by David Klee and Bob Pusateri, Heraflux Technologies
     http://www.heraflux.com
     
     .DESCRIPTION
@@ -48,7 +48,7 @@ param(
 $VerbosePreference="Continue"
 
 if($ConnString -eq "") {
-    $ConnString = "Data Source=$ServerName;Initial Catalog=tempdb;Connection Timeout=3600;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
+    $ConnString = "Data Source=localhost;Initial Catalog=PerfmonImport;Connection Timeout=240;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
 }
 
 Clear-Host
