@@ -48,7 +48,7 @@ param(
 $VerbosePreference="Continue"
 
 if($ConnString -eq "") {
-    $ConnString = "Data Source=localhost;Initial Catalog=PerfmonImport;Connection Timeout=240;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
+    $ConnString = "Data Source=localhost;Initial Catalog=PerfmonImport;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
 }
 
 Clear-Host
@@ -131,7 +131,7 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
                     $row.ServerName = $ServerName
                     $row.DateTimeStamp = [datetime]$sample.Timestamp
                     $row.CounterInstance = [string]$sample.InstanceName
-                    $row.CounterValue = [int]$sample.CookedValue
+                    $row.CounterValue = [long]$sample.CookedValue
                     $dt.Rows.Add($row)
                     
                 } catch {
