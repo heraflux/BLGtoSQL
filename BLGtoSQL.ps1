@@ -94,6 +94,7 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
    $bcp = new-object ("System.Data.SqlClient.SqlBulkCopy") $sqlconn
    $bcp.DestinationTableName = "dbo.PerfmonImport"
    $bcp.BulkCopyTimeout = 0
+   $bcp.BatchSize = 1048576  #Best for columnstore inserts
    $sqlconn.Open()
 
    #Create placeholder datatable
