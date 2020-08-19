@@ -48,7 +48,7 @@ param(
 $VerbosePreference="Continue"
 
 if($ConnString -eq "") {
-    $ConnString = "Data Source=localhost;Initial Catalog=PerfmonImport;Connection Timeout=240;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
+    $ConnString = "Data Source=localhost;Initial Catalog=PerfmonImport;Integrated Security=True;Application Name=PowerShell_PerfmonToSQL;"
 }
 
 Clear-Host
@@ -92,8 +92,9 @@ write-verbose "Import Directory: $PerfmonDirectory"
 ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
    write-verbose "CSV file to import: $File"
    $bcp = new-object ("System.Data.SqlClient.SqlBulkCopy") $sqlconn
-   $bcp.DestinationTableName = "dbo.PerfmonImportStage"
+   $bcp.DestinationTableName = "dbo.PerfmonImport"
    $bcp.BulkCopyTimeout = 0
+   $bcp.BatchSize = 1048576  #Best for columnstore inserts
    $sqlconn.Open()
 
    #Create placeholder datatable
@@ -111,6 +112,14 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
    $dt.columns.Add($col4)
    $dt.columns.Add($col5)
 
+   #Map columns
+   $bcp.ColumnMappings.Add('ServerName', 'ServerName')
+   $bcp.ColumnMappings.Add('DateTimeStamp', 'DateTimeStamp')
+   $bcp.ColumnMappings.Add('CounterSet', 'CounterSet')
+   $bcp.ColumnMappings.Add('CounterName', 'CounterName')
+   $bcp.ColumnMappings.Add('CounterInstance', 'CounterInstance')
+   $bcp.ColumnMappings.Add('CounterValue', 'CounterValue')
+   
    #Load this BLG into RAM
    try {
        $blg = Import-Counter -Path $File.FullName -ErrorAction SilentlyContinue
@@ -131,7 +140,7 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
                     $row.ServerName = $ServerName
                     $row.DateTimeStamp = [datetime]$sample.Timestamp
                     $row.CounterInstance = [string]$sample.InstanceName
-                    $row.CounterValue = [int]$sample.CookedValue
+                    $row.CounterValue = [long]$sample.CookedValue
                     $dt.Rows.Add($row)
                     
                 } catch {
@@ -140,7 +149,7 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
                 }
             }
         }
-        $flushoutput = $blg.Count.ToString() + " points collected. Flushing to database..."
+        $flushoutput = $blg.Count.ToString() + " points collected. Storing to database..."
         write-verbose $flushoutput
         try {
             $bcp.WriteToServer($dt)
@@ -154,29 +163,13 @@ ForEach ($File in (get-childitem $PerfmonDirectory -recurse -Filter "*.csv")) {
     }
 } # for each file
 
-   #Clean up
-   $sqlconn.Dispose()
-   $bcp.Close()
-   $bcp.Dispose()
-   $dt.Dispose()
-   [System.GC]::Collect()
+#Clean up
+$sqlconn.Dispose()
+$bcp.Close()
+$bcp.Dispose()
+$dt.Dispose()
+[System.GC]::Collect()
 
    
 
-
-
-#Move data to final table and clean up staging table
-write-verbose "Now moving data to the final table..."
-$conn = new-object System.Data.SqlClient.SqlConnection($ConnString)
-$conn.Open()
-$cmd = new-object System.Data.SqlClient.SqlCommand
-$cmd.Connection = $conn
-$cmd.CommandText = "INSERT INTO dbo.PerfmonImport (ServerName, DateTimeStamp, CounterSet, CounterName, CounterInstance, CounterValue) SELECT ServerName, DateTimeStamp, CounterSet, CounterName, CounterInstance, CounterValue from dbo.PerfmonImportStage"
-$numberofrecords = $cmd.ExecuteNonQuery()
-$cmd.CommandText = "TRUNCATE TABLE dbo.PerfmonImportStage"
-$trunc1 = $cmd.ExecuteNonQuery()
-$conn.Close()
-if ($trunc1 -eq -1){Write-Verbose "Truncating table PerfmonImportStage"}
-$outputtext = $numberofrecords.ToString() + " imported into PerfmonImport table"
-Write-Verbose $outputtext
 write-verbose "Done importing this Perfmon data batch!"
