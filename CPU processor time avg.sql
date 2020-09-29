@@ -13,7 +13,7 @@ from
 	dbo.PerfmonImport
 where
 	ServerName = @ServerName
-	and CounterInstance like @CounterSet
+	and CounterSet like @CounterSet
 	and CounterInstance like @Counter
 	and CounterInstance not like '%Process(sqlservr)%'
 	and CounterInstance not like '%_Total%'
