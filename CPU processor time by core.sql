@@ -8,9 +8,9 @@ set @Counter = '%' + @Counter + '%'
 
 select 
 	ServerName, DateTimeStamp,
-	cast(SUBSTRING(CounterInstance, LEN(LEFT(CounterInstance, CHARINDEX ('(', CounterInstance))) + 1, 
-		LEN(CounterInstance) - LEN(LEFT(CounterInstance, CHARINDEX ('(', CounterInstance))) - 
-		LEN(RIGHT(CounterInstance, LEN(CounterInstance) - CHARINDEX (')', CounterInstance))) - 1) as int) as CPUCore,
+	cast(SUBSTRING(CounterSet, LEN(LEFT(CounterSet, CHARINDEX ('(', CounterSet))) + 1, 
+		LEN(CounterSet) - LEN(LEFT(CounterSet, CHARINDEX ('(', CounterSet))) - 
+		LEN(RIGHT(CounterSet, LEN(CounterSet) - CHARINDEX (')', CounterSet))) - 1) as int) as CPUCore,
 	CounterValue
 from
 	dbo.PerfmonImport
